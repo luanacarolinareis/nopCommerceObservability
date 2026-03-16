@@ -114,6 +114,17 @@ public partial interface IProductService
     Task UpdateProductAsync(Product product);
 
     /// <summary>
+    /// Updates the product with an explicit observability hint for the publish-state transition.
+    /// Use this overload from the admin controller where both old and new Published states
+    /// are already known, so no extra DB query is needed to detect the transition.
+    /// </summary>
+    /// <param name="product">Product</param>
+    /// <param name="publishTransition">
+    ///   Semantic description: "first_publish" | "unpublish" | "update_published" | "update_draft" | null
+    /// </param>
+    Task UpdateProductAsync(Product product, string? publishTransition);
+
+    /// <summary>
     /// Updates products
     /// </summary>
     /// <param name="products">Products to update</param>
