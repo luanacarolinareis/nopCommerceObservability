@@ -1,6 +1,8 @@
 ﻿using System.Data.SqlTypes;
+using System.Diagnostics;
 using Nop.Core;
 using Nop.Core.Caching;
+using Nop.Services.Catalog.Observability;
 using Nop.Core.Domain.Catalog;
 using Nop.Core.Domain.Customers;
 using Nop.Core.Domain.Discounts;
@@ -574,7 +576,39 @@ public partial class ProductService : IProductService
     /// <returns>A task that represents the asynchronous operation</returns>
     public virtual async Task InsertProductAsync(Product product)
     {
-        await _productRepository.InsertAsync(product);
+        var sw = Stopwatch.StartNew();
+        using var activity = NopCatalogActivitySource.StartProductInsertActivity(product.Name, product.Sku, product.Published);
+        try
+        {
+            await _productRepository.InsertAsync(product);
+
+            // Now that the DB has assigned an Id, enrich the span
+            activity?.SetTag(NopCatalogActivitySource.ProductIdTag, product.Id);
+            activity?.SetStatus(ActivityStatusCode.Ok);
+
+            // Metrics
+            NopCatalogMetrics.ProductsInserted.Add(1, new KeyValuePair<string, object?>("product.published", product.Published));
+
+            if (product.Published)
+                NopCatalogMetrics.ProductsPublished.Add(1, new KeyValuePair<string, object?>("publish_transition", "new_product"));
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddEvent(new ActivityEvent("exception",
+                tags: new ActivityTagsCollection
+                {
+                    ["exception.type"]    = ex.GetType().FullName,
+                    ["exception.message"] = ex.Message,
+                }));
+            throw;
+        }
+        finally
+        {
+            sw.Stop();
+            if (product.Published)
+                NopCatalogMetrics.ProductPublishDuration.Record(sw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("operation", "insert"));
+        }
     }
 
     /// <summary>
@@ -594,7 +628,71 @@ public partial class ProductService : IProductService
     /// <returns>A task that represents the asynchronous operation</returns>
     public virtual async Task UpdateProductAsync(Product product)
     {
-        await _productRepository.UpdateAsync(product);
+        await UpdateProductAsync(product, publishTransition: null);
+    }
+
+    /// <summary>
+    /// Updates the product with an explicit publish-transition hint for observability.
+    /// Called by the admin controller where both old and new published states are already known,
+    /// avoiding an extra DB round-trip just for telemetry purposes.
+    /// </summary>
+    /// <param name="product">Product (already mapped from the view model)</param>
+    /// <param name="publishTransition">
+    ///   Semantic description of the publish-state change:
+    ///   "first_publish" | "unpublish" | "update_published" | "update_draft" | null
+    /// </param>
+    public virtual async Task UpdateProductAsync(Product product, string? publishTransition)
+    {
+        var sw = Stopwatch.StartNew();
+
+        // Derive wasPublishedBefore only for building the activity tag when the caller
+        // already told the transition (no extra DB query)
+        bool wasPublishedBefore = publishTransition switch
+        {
+            "first_publish" => false,
+            "unpublish" => true,
+            "update_published" or "update_draft" => product.Published,
+            _ => product.Published, // unknown -> best-effort: no transition assumed
+        };
+
+        using var activity = NopCatalogActivitySource.StartProductUpdateActivity(
+            product.Id, product.Name, product.Sku, product.Published, wasPublishedBefore);
+
+        if (publishTransition is not null)
+            activity?.SetTag(NopCatalogActivitySource.PublishTransitionTag, publishTransition);
+
+        try
+        {
+            await _productRepository.UpdateAsync(product);
+            activity?.SetStatus(ActivityStatusCode.Ok);
+
+            // Metrics
+            NopCatalogMetrics.ProductsUpdated.Add(1, new KeyValuePair<string, object?>("product.published", product.Published));
+
+            var resolvedTransition = publishTransition ?? (product.Published ? "update_published" : "update_draft");
+
+            if (resolvedTransition == "first_publish")
+                NopCatalogMetrics.ProductsPublished.Add(1, new KeyValuePair<string, object?>("publish_transition", resolvedTransition));
+            else if (resolvedTransition == "unpublish")
+                NopCatalogMetrics.ProductsUnpublished.Add(1);
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddEvent(new ActivityEvent("exception",
+                tags: new ActivityTagsCollection
+                {
+                    ["exception.type"]    = ex.GetType().FullName,
+                    ["exception.message"] = ex.Message,
+                }));
+            throw;
+        }
+        finally
+        {
+            sw.Stop();
+            if (publishTransition is "first_publish" or "new_product")
+                NopCatalogMetrics.ProductPublishDuration.Record(sw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("operation", publishTransition));
+        }
     }
 
     /// <summary>
