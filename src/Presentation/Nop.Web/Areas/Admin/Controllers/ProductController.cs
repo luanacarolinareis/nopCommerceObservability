@@ -1,4 +1,5 @@
-﻿using System.Text;
+﻿using System.Diagnostics;
+using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Primitives;
 using Nop.Core;
@@ -19,6 +20,7 @@ using Nop.Core.Http;
 using Nop.Core.Infrastructure;
 using Nop.Services.ArtificialIntelligence;
 using Nop.Services.Catalog;
+using Nop.Services.Catalog.Observability;
 using Nop.Services.Common;
 using Nop.Services.Configuration;
 using Nop.Services.Directory;
@@ -1053,6 +1055,13 @@ public partial class ProductController : BaseAdminController
     [CheckPermission(StandardPermission.Catalog.PRODUCTS_CREATE_EDIT_DELETE)]
     public virtual async Task<IActionResult> Create(ProductModel model, bool continueEditing)
     {
+        // Observability: root span for the admin "create product" operation
+        // ActivityKind.Server because this is the entry point of an HTTP POST from the UI
+        using var adminActivity = NopCatalogActivitySource.Source.StartActivity("admin.product.create", ActivityKind.Server);
+        adminActivity?.SetTag("http.route", "Admin/Product/Create");
+        adminActivity?.SetTag("catalog.product.name_submitted", model.Name);
+        adminActivity?.SetTag("catalog.product.published_submitted", model.Published);
+
         //validate maximum number of products per vendor
         var currentVendor = await _workContext.GetCurrentVendorAsync();
         if (_vendorSettings.MaximumProductNumber > 0 &&
@@ -1079,6 +1088,10 @@ public partial class ProductController : BaseAdminController
             product.CreatedOnUtc = DateTime.UtcNow;
             product.UpdatedOnUtc = DateTime.UtcNow;
             await _productService.InsertProductAsync(product);
+
+            // Enrich the root admin span with the assigned product ID
+            adminActivity?.SetTag(NopCatalogActivitySource.ProductIdTag, product.Id);
+            adminActivity?.SetTag(NopCatalogActivitySource.ProductSkuTag, product.Sku);
 
             //search engine name
             model.SeName = await _urlRecordService.ValidateSeNameAsync(product, model.SeName, product.Name, true);
@@ -1188,6 +1201,13 @@ public partial class ProductController : BaseAdminController
         if (currentVendor != null && product.VendorId != currentVendor.Id)
             return RedirectToAction("List");
 
+        // Observability: root span for the admin "edit product" operation
+        // Started it here so it covers the full HTTP action including validation
+        using var adminActivity = NopCatalogActivitySource.Source.StartActivity("admin.product.edit", ActivityKind.Server);
+        adminActivity?.SetTag("http.route", "Admin/Product/Edit");
+        adminActivity?.SetTag(NopCatalogActivitySource.ProductIdTag, model.Id);
+        adminActivity?.SetTag(NopCatalogActivitySource.ProductNameTag, product.Name);
+
         //check if the product quantity has been changed while we were editing the product
         //and if it has been changed then we show error notification
         //and redirect on the editing page without data saving
@@ -1217,10 +1237,25 @@ public partial class ProductController : BaseAdminController
             var previousProductType = product.ProductType;
             var previousRequiredProductIds = product.RequiredProductIds;
 
+            // Observability: capture Published BEFORE the model mapping overwrites it
+            var previousPublished = product.Published;
+
             //product
             product = model.ToEntity(product);
 
             product.UpdatedOnUtc = DateTime.UtcNow;
+
+            // Determine the semantic publish-state transition for telemetry
+            var publishTransition = (previousPublished, product.Published) switch
+            {
+                (false, true) => "first_publish",
+                (true,  false) => "unpublish",
+                (true,  true) => "update_published",
+                (false, false) => "update_draft",
+            };
+
+            // Tag the root admin span with the resolved transition
+            adminActivity?.SetTag(NopCatalogActivitySource.PublishTransitionTag, publishTransition);
 
             var requireOtherProductsError = string.Empty;
 
@@ -1240,7 +1275,8 @@ public partial class ProductController : BaseAdminController
             if (!string.IsNullOrEmpty(requireOtherProductsError))
                 product.RequiredProductIds = previousRequiredProductIds;
 
-            await _productService.UpdateProductAsync(product);
+            // Pass the publish-transition hint to avoid an extra DB query in the service layer
+            await _productService.UpdateProductAsync(product, publishTransition);
 
             //remove associated products
             if (previousProductType == ProductType.GroupedProduct && product.ProductType == ProductType.SimpleProduct)
