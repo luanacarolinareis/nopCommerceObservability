@@ -2,6 +2,7 @@
 using Nop.Core.Configuration;
 using Nop.Core.Infrastructure;
 using Nop.Web.Framework.Infrastructure.Extensions;
+using Nop.Web.Infrastructure.Extensions;
 
 namespace Nop.Web;
 
@@ -41,10 +42,18 @@ public partial class Program
         //add services to the application and configure service provider
         builder.Services.ConfigureApplicationServices(builder);
 
+        // OpenTelemetry: tracing + metrics
+        // Must be called after ConfigureApplicationServices so AppSettings is loaded
+        builder.Services.AddNopObservability(builder.Configuration);
+
         var app = builder.Build();
 
         //configure the application HTTP request pipeline
         app.ConfigureRequestPipeline();
+
+        // Expose /metrics endpoint for Prometheus scraping
+        app.UseNopObservability();
+
         await app.PublishAppStartedEventAsync();
 
         await app.RunAsync();

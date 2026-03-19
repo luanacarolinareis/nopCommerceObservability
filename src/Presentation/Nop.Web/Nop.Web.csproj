@@ -25,6 +25,22 @@
     <ProjectReference Include="..\Nop.Web.Framework\Nop.Web.Framework.csproj" />
   </ItemGroup>
 
+  <!-- OpenTelemetry SDK (wired ONLY at the host/composition-root level) -->
+  <ItemGroup>
+    <!-- Core hosting integration -->
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.9.0" />
+    <!-- ASP.NET Core automatic instrumentation (incoming HTTP) -->
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.9.0" />
+    <!-- Outgoing HTTP client instrumentation -->
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.9.0" />
+    <!-- OTLP exporter → sends data to OpenTelemetry Collector / Jaeger / Tempo -->
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.9.0" />
+    <!-- Console exporter - useful during local development / CI -->
+    <PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.9.0" />
+    <!-- Prometheus exporter for metrics scraping -->
+    <PackageReference Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" Version="1.9.0-beta.2" />
+  </ItemGroup>
+
   <ItemGroup>
     <!-- We copy the entire \App_Data directory. But we ignore JSON files and data protection keys  -->
     <Content Include="App_Data\**" CopyToPublishDirectory="PreserveNewest" Exclude="App_Data\*.json" />
