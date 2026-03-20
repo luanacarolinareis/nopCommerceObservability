@@ -1,0 +1,58 @@
+receivers:
+  # Receives OTLP data from nopCommerce (both gRPC and HTTP)
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Batch for efficiency; flush every 5s or when 512 spans accumulate
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+  # Adds k8s-style resource attributes (helpful even in Docker Compose)
+  resource:
+    attributes:
+      - action: insert
+        key: environment
+        value: development
+
+exporters:
+  # Traces → Jaeger via OTLP gRPC
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+  # Metrics → Prometheus pull model
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    send_timestamps: true
+    metric_expiration: 3m
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  # Debug exporter: prints a summary to collector logs (useful during development)
+  debug:
+    verbosity: normal
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+service:
+  telemetry:
+    logs:
+      level: warn
+
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch, resource]
+      exporters: [otlp/jaeger, debug]
+
+    metrics:
+      receivers: [otlp]
+      processors: [batch, resource]
+      exporters: [prometheus, debug]

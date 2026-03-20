@@ -1,0 +1,19 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Scrape metrics forwarded by the OTel Collector (primary path)
+  - job_name: nopcommerce_via_collector
+    static_configs:
+      - targets: ["otel-collector:8889"]
+        labels:
+          service: nopcommerce
+          source: otel_collector
+
+  # Direct scrape from nopCommerce Prometheus endpoint (fallback / secondary)
+  # Enabled only when the nopCommerce container name is resolvable on this network
+  # - job_name: nopcommerce_direct
+  #   static_configs:
+  #     - targets: ["nopcommerce:80"]
+  #   metrics_path: /metrics

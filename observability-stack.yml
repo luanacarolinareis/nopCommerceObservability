@@ -1,0 +1,88 @@
+version: "3.9"
+
+# nopCommerce Observability Stack
+#
+# Architecture:
+#   nopCommerce ── OTLP gRPC ──► OTel Collector ──► Jaeger (traces)
+#                                               ──► Prometheus (metrics)
+#   Prometheus ◄─── scrape ─── nopCommerce /metrics  (fallback: direct scrape)
+#   Grafana ◄─── query ─── Prometheus + Jaeger
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f observability-stack.yml up
+
+services:
+
+  # OpenTelemetry Collector
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.103.0
+    container_name: nop_otel_collector
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC ← nopCommerce → Collector
+      - "4318:4318"   # OTLP HTTP ← nopCommerce → Collector (alternative)
+      - "8889:8889"   # Prometheus scrape endpoint (Collector → Prometheus)
+    depends_on:
+      - jaeger
+    networks:
+      - observability
+
+  # Jaeger (distributed tracing UI)
+  jaeger:
+    image: jaegertracing/all-in-one:1.58
+    container_name: nop_jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"   # Jaeger UI → http://localhost:16686
+      - "14250:14250"   # OTLP gRPC intake from Collector
+    networks:
+      - observability
+
+  # Prometheus (metrics storage & alerting)
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: nop_prometheus
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    ports:
+      - "9090:9090"   # Prometheus UI → http://localhost:9090
+    depends_on:
+      - otel-collector
+    networks:
+      - observability
+
+  # Grafana (dashboards)
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: nop_grafana
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"   # Grafana UI → http://localhost:3000
+    depends_on:
+      - prometheus
+      - jaeger
+    networks:
+      - observability
+
+volumes:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  observability:
+    driver: bridge
