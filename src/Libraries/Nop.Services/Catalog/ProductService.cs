@@ -577,7 +577,7 @@ public partial class ProductService : IProductService
     public virtual async Task InsertProductAsync(Product product)
     {
         var sw = Stopwatch.StartNew();
-        using var activity = NopCatalogActivitySource.StartProductInsertActivity(product.Name, product.Sku, product.Published);
+        using var activity = NopCatalogActivitySource.StartProductInsertActivity(product.Sku, product.Published);
         try
         {
             await _productRepository.InsertAsync(product);
@@ -656,7 +656,7 @@ public partial class ProductService : IProductService
         };
 
         using var activity = NopCatalogActivitySource.StartProductUpdateActivity(
-            product.Id, product.Name, product.Sku, product.Published, wasPublishedBefore);
+            product.Id, product.Sku, product.Published, wasPublishedBefore);
 
         if (publishTransition is not null)
             activity?.SetTag(NopCatalogActivitySource.PublishTransitionTag, publishTransition);

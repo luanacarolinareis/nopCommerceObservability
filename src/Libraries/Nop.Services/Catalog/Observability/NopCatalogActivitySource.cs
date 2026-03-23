@@ -29,7 +29,6 @@ public static class NopCatalogActivitySource
 
     // Catalog / product
     public const string ProductIdTag = "catalog.product.id";
-    public const string ProductNameTag = "catalog.product.name";
     public const string ProductSkuTag = "catalog.product.sku";
     public const string ProductPublishedTag = "catalog.product.published";
     public const string ProductTypeTag = "catalog.product.type";
@@ -53,12 +52,11 @@ public static class NopCatalogActivitySource
     /// <summary>
     /// Creates a span representing the insertion of a new product into the catalogue.
     /// </summary>
-    public static Activity? StartProductInsertActivity(string? productName, string? sku, bool published)
+    public static Activity? StartProductInsertActivity(string? sku, bool published)
     {
         var activity = _source.StartActivity("catalog.product.insert", ActivityKind.Internal);
         if (activity is null) return null;
 
-        activity.SetTag(ProductNameTag, productName);
         activity.SetTag(ProductSkuTag, sku);
         activity.SetTag(ProductPublishedTag, published);
         activity.SetTag(OperationTypeTag, "insert");
@@ -71,13 +69,12 @@ public static class NopCatalogActivitySource
     /// Creates a span representing an update to an existing product.
     /// The <paramref name="wasPublishedBefore"/> flag allows detecting publish-state changes.
     /// </summary>
-    public static Activity? StartProductUpdateActivity(int productId, string? productName, string? sku, bool published, bool wasPublishedBefore)
+    public static Activity? StartProductUpdateActivity(int productId, string? sku, bool published, bool wasPublishedBefore)
     {
         var activity = _source.StartActivity("catalog.product.update", ActivityKind.Internal);
         if (activity is null) return null;
 
         activity.SetTag(ProductIdTag, productId);
-        activity.SetTag(ProductNameTag, productName);
         activity.SetTag(ProductSkuTag, sku);
         activity.SetTag(ProductPublishedTag, published);
         activity.SetTag(OperationTypeTag, "update");

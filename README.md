@@ -27,7 +27,7 @@
 │  │  Admin UI  POST /Admin/Product/Create or /Edit              │    │
 │  │  ProductController                                          │    │
 │  │    ActivityKind.Server  "admin.product.create"              │    │
-│  │    tags: http.route · product.id · publish_transition       │    │
+│  │    tags: http.route · product.id · sku · publish_transition │    │
 │  └──────────────────────────────┬──────────────────────────────┘    │
 │                                 │ calls                             │
 │  ┌──────────────────────────────▼──────────────────────────────┐    │
@@ -474,7 +474,6 @@ The full end-to-end trace for **Admin Publishes a New Product** will look like t
 [Browser] POST /Admin/Product/Create
     │
     ├─ [admin.product.create]  ← root span, ActivityKind.Server
-    │    catalog.product.name_submitted = "Wireless Headphones"
     │    catalog.product.published_submitted = true
     │    catalog.product.id = 42   (set after DB insert)
     │    catalog.product.sku = "WH-001"

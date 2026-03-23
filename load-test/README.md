@@ -203,6 +203,26 @@ The project script defines `gracefulStop` inside each scenario, which is the cor
 If the nopCommerce instance requires additional fields or custom plugins alter the form, inspect the returned validation message and adapt the payload in [`publish-product.js`](./publish-product.js).
 
 **Products accumulate in the database**  
-→ This is expected for a load test. Run  
-  `DELETE FROM Product WHERE Name LIKE 'LoadTest-Product-%'`  
-  against the database after testing.
+→ This is expected for a load test. The repository includes a cleanup helper for PostgreSQL:
+
+```bash
+bash load-test/cleanup-load-test-products.sh
+```
+
+By default it targets the Docker container and database used in the main README:
+- container: `nopcommerce_pg`
+- database: `nopcommerce`
+- user: `postgres`
+- password: `db_password`
+- prefix: `LoadTest-Product-`
+
+You can override them with environment variables:
+
+```bash
+POSTGRES_CONTAINER=nopcommerce_pg \
+POSTGRES_DB=nopcommerce \
+POSTGRES_USER=postgres \
+POSTGRES_PASSWORD=db_password \
+PRODUCT_PREFIX=LoadTest-Product- \
+bash load-test/cleanup-load-test-products.sh
+```

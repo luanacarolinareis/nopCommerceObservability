@@ -7,7 +7,19 @@ implementation.
 
 ## What was done well
 
-### 1. Vendor-neutral instrumentation in the service layer
+### 1. Source-side data minimization fits the chosen flow
+
+The selected flow is an admin catalogue write path, not checkout or payment.
+That means the strongest privacy control is not masking after the fact, but
+emitting only the small set of operational fields needed for correlation:
+route, product identifier, SKU, publish state, publish transition, and cache
+metadata. Even product name was removed because it was not required for the
+demo's debugging goals.
+
+Benefit: privacy guarantees do not depend on a Collector processor, exporter,
+or storage backend being configured correctly.
+
+### 2. Vendor-neutral instrumentation in the service layer
 
 `NopCatalogActivitySource` and `NopCatalogMetrics` depend only on
 `System.Diagnostics.ActivitySource` and `System.Diagnostics.Metrics.Meter`:
@@ -18,7 +30,7 @@ CNCF recommended practice of separating _instrumentation_ from _export_.
 Benefit: swapping Jaeger for Tempo, or Prometheus for OTLP metrics, requires
 no changes below `Nop.Web`.
 
-### 2. Semantic `publish_transition` tag
+### 3. Semantic `publish_transition` tag
 
 The `catalog.product.publish_transition` tag encodes business intent in the
 trace (`new_product`, `first_publish`, `unpublish`, `update_published`,
@@ -26,14 +38,14 @@ trace (`new_product`, `first_publish`, `unpublish`, `update_published`,
 allows Grafana / Jaeger queries like _"how many un-publishes happened today?"_
 without post-processing.
 
-### 3. No extra database query
+### 4. No extra database query
 
 The initial design retrieved `previousPublished` via a DB round-trip inside
 `UpdateProductAsync`. This was replaced with an overload that receives the
 transition hint from the controller, where the original state is already
 available in memory. This keeps the happy-path latency unchanged.
 
-### 4. ActivityKind.Server on controller root spans
+### 5. ActivityKind.Server on controller root spans
 
 Using `ActivityKind.Server` instead of the default `Internal` enables
 OpenTelemetry Collector and Jaeger to correctly classify these as inbound

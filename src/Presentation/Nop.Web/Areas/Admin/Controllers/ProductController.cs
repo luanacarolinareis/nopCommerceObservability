@@ -1059,7 +1059,6 @@ public partial class ProductController : BaseAdminController
         // ActivityKind.Server because this is the entry point of an HTTP POST from the UI
         using var adminActivity = NopCatalogActivitySource.Source.StartActivity("admin.product.create", ActivityKind.Server);
         adminActivity?.SetTag("http.route", "Admin/Product/Create");
-        adminActivity?.SetTag("catalog.product.name_submitted", model.Name);
         adminActivity?.SetTag("catalog.product.published_submitted", model.Published);
 
         //validate maximum number of products per vendor
@@ -1206,7 +1205,6 @@ public partial class ProductController : BaseAdminController
         using var adminActivity = NopCatalogActivitySource.Source.StartActivity("admin.product.edit", ActivityKind.Server);
         adminActivity?.SetTag("http.route", "Admin/Product/Edit");
         adminActivity?.SetTag(NopCatalogActivitySource.ProductIdTag, model.Id);
-        adminActivity?.SetTag(NopCatalogActivitySource.ProductNameTag, product.Name);
 
         //check if the product quantity has been changed while we were editing the product
         //and if it has been changed then we show error notification
