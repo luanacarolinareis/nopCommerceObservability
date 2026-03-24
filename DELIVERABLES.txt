@@ -1,0 +1,55 @@
+DELIVERABLES POINTER FILE
+=========================
+
+This repository is the primary submission. The items below point to the
+required documentation and artefacts for the assignment.
+
+Required deliverables
+---------------------
+
+1. GitHub repository link
+   - This repository should be published as a fork of nopCommerce.
+
+2. README.md
+   - File: README.md
+   - Purpose: build, run, observability stack usage, dashboard viewing, and architecture diagram of the instrumented flow.
+
+3. Grafana dashboard
+   - Dashboard JSON / provisioning: observability/grafana/
+   - Screenshots / visual evidence: pictures/
+
+4. Load test script
+   - Scripts and helpers: load-test/
+   - Run instructions: load-test/README.md
+
+5. Critique
+   - File: CRITIQUE.md
+
+6. Presentation / Demo
+   - Slide deck / PDF: AS - Assignment 1 PPT.pdf
+
+Project structure
+-------------------------------------------------
+
+/
+|-- README.md
+|-- DELIVERABLES.txt
+|-- CRITIQUE.md
+|-- AS - Assignment 1 PPT.pdf
+|-- pictures/                     -> diagrams + screenshots + evidence
+|-- load-test/                    -> load-test scripts + instructions
+|-- observability/                -> Grafana provisioning and stack assets
+|-- observability-stack.yml
+|-- otel-collector-config.yaml
+`-- src/                          -> nopCommerce source folders
+
+Notes
+-----
+
+- The main report content lives in README.md.
+
+- The suggested assessment/ folder is not materialized as a single directory;
+  the equivalent artefacts are distributed across pictures/, load-test/, observability/, and root-level config files.
+
+- For a reviewer, the quickest path is:
+  README.md -> CRITIQUE.md -> load-test/README.md -> observability/grafana/ -> pictures/ -> presentation PDF.
