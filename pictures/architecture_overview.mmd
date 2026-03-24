@@ -1,0 +1,72 @@
+%%{init: {
+  "theme": "base",
+  "themeVariables": {
+    "background": "#fcfbf7",
+    "primaryColor": "#f4efe4",
+    "primaryTextColor": "#1f2937",
+    "primaryBorderColor": "#b68c5a",
+    "lineColor": "#6b7280",
+    "secondaryColor": "#e7f0ea",
+    "tertiaryColor": "#eef4fb",
+    "fontFamily": "Georgia, ui-serif, serif",
+    "clusterBkg": "#f8f5ee",
+    "clusterBorder": "#b68c5a"
+  },
+  "flowchart": {
+    "curve": "basis",
+    "nodeSpacing": 35,
+    "rankSpacing": 45,
+    "htmlLabels": true
+  }
+}}%%
+flowchart TB
+    K6["<b>k6 Load Test Client</b><br/>Ramp / Spike / Soak scenarios"]
+
+    subgraph App["nopCommerce (.NET 8)"]
+        direction LR
+
+        Admin["<b><font color='#9a4f18'>Admin UI</font></b><br/>POST <code>/Admin/Product/Create</code> or <code>/Edit</code><br/><br/><b><font color='#9a4f18'>ProductController</font></b><br/><b>root span:</b> <code>admin.product.create</code><br/><b>tags:</b> route, product.id, sku, publish_transition"]
+        Service["<b><font color='#356347'>Catalogue Layer</font></b><br/><br/><b><font color='#356347'>ProductService</font></b><br/><b>spans:</b> <code>catalog.product.insert</code><br/><code>catalog.product.update</code><br/><b>metrics:</b> products.inserted, products.published,<br/>products.unpublished, publish.duration"]
+        Cache["<b><font color='#375d8a'>Cache Layer</font></b><br/><br/><b><font color='#375d8a'>ProductCacheEventConsumer</font></b><br/><b>span:</b> <code>catalog.cache.invalidation</code><br/><b>tags:</b> entity_type, entity_id, cache.keys_removed_count<br/><b>metric:</b> cache.invalidations"]
+        Host["<b><font color='#7a4f77'>Observability Composition Root</font></b><br/><br/><b><font color='#7a4f77'>ObservabilityServiceExtensions</font></b><br/>TracerProvider -> <code>Nop.Catalog</code><br/>MeterProvider -> <code>Nop.Catalog</code><br/><code>GET /metrics</code> for Prometheus scrape"]
+        Db["<b>PostgreSQL</b><br/>nopCommerce catalog persistence"]
+
+        Admin -->|"calls"| Service
+        Service -->|"writes products"| Db
+        Service -->|"entity events trigger"| Cache
+        Host -. "registers listeners" .-> Service
+        Host -. "registers listeners" .-> Cache
+    end
+
+    Collector["<b><font color='#6f6239'>OpenTelemetry Collector</font></b><br/><br/><b>OTLP receivers:</b> 4317 / 4318<br/><b>processors:</b> batch, resource<br/>exports traces to Jaeger<br/>exports metrics for Prometheus scrape"]
+    Jaeger["<b>Jaeger</b><br/>Trace UI<br/><code>:16686</code>"]
+    Prometheus["<b>Prometheus</b><br/>Metrics storage<br/><code>:9090</code>"]
+    Grafana["<b>Grafana</b><br/>Dashboards<br/><code>:3000</code>"]
+
+    K6 -->|"submits admin requests"| Admin
+    Cache -->|"OTLP gRPC :4317"| Collector
+    Host -->|"Prometheus scrape /metrics"| Prometheus
+    Collector -->|"traces"| Jaeger
+    Collector -->|"metrics scrape :8889"| Prometheus
+    Jaeger --> Grafana
+    Prometheus --> Grafana
+
+    classDef admin fill:#f6e7d8,stroke:#b86a2b,stroke-width:2px,color:#2b2118;
+    classDef service fill:#e4efe8,stroke:#4b7f5d,stroke-width:2px,color:#17261d;
+    classDef cache fill:#e7eef8,stroke:#4a6f9c,stroke-width:2px,color:#142233;
+    classDef host fill:#f4e8f3,stroke:#8c5e89,stroke-width:2px,color:#291828;
+    classDef infra fill:#f4f1e8,stroke:#8b7a49,stroke-width:2px,color:#2a2618;
+    classDef ui fill:#ede9fe,stroke:#6954a3,stroke-width:2px,color:#201833;
+    classDef load fill:#fff2e2,stroke:#c98b2a,stroke-width:2px,color:#2f2112;
+    classDef db fill:#eceff1,stroke:#667085,stroke-width:2px,color:#1f2937;
+
+    class K6 load;
+    class Admin admin;
+    class Service service;
+    class Cache cache;
+    class Host host;
+    class Db db;
+    class Collector infra;
+    class Prometheus infra;
+    class Jaeger ui;
+    class Grafana ui;

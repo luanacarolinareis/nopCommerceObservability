@@ -159,16 +159,13 @@
     },
     {
       "id": 6,
-      "title": "Trace Explorer (Jaeger)",
-      "type": "traces",
-      "datasource": {"type": "jaeger", "uid": "jaeger"},
+      "title": "Trace Lookup (Jaeger)",
+      "type": "text",
       "gridPos": {"x": 0, "y": 20, "w": 24, "h": 10},
-      "targets": [
-        {
-          "service": "nopcommerce",
-          "operation": "admin.product.create"
-        }
-      ]
+      "options": {
+        "mode": "markdown",
+        "content": "### Open traces in Jaeger\n\nThe embedded Grafana trace panel is intentionally disabled in this setup because it is less reliable than querying Jaeger directly during the demo.\n\nUse Jaeger UI instead:\n- URL: http://localhost:16686\n- Service: `nopcommerce`\n- Operation: `admin.product.create`\n\nExpected child spans:\n- `catalog.product.insert`\n- `catalog.cache.invalidation`\n\nIf the operation dropdown is empty, run the load test first and refresh Jaeger."
+      }
     }
   ]
 }

@@ -1,0 +1,6 @@
+For this screenshot, the sequence of tests made was:
+    - ramp
+    - ramp
+    - ramp
+    - spike
+    - soak

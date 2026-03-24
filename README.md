@@ -8,79 +8,23 @@
 ## Table of Contents
 
 1. [Architecture Overview](#architecture-overview)
-2. [Architectural Reading of nopCommerce](#architectural-reading-of-nopcommerce)
-3. [Metric Design and Justification](#metric-design-and-justification)
-4. [Prerequisites](#prerequisites)
-5. [Build](#build)
-6. [Run (with observability stack)](#run)
-7. [Viewing the Dashboards](#viewing-the-dashboards)
-8. [Load Test](#load-test)
-9. [Instrumented User Flow](#instrumented-user-flow)
+2. [Surgical Changes to nopCommerce](#surgical-changes-to-nopcommerce)
+3. [Architectural Reading of nopCommerce](#architectural-reading-of-nopcommerce)
+4. [Metric Design and Justification](#metric-design-and-justification)
+5. [Prerequisites](#prerequisites)
+6. [Build](#build)
+7. [Run (with observability stack)](#run)
+8. [Viewing the Dashboards](#viewing-the-dashboards)
+9. [Load Test](#load-test)
+10. [Instrumented User Flow](#instrumented-user-flow)
 
 ---
 
 ## Architecture Overview
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         nopCommerce (.NET 8)                        │
-│                                                                     │
-│  ┌─────────────────────────────────────────────────────────────┐    │
-│  │  Admin UI  POST /Admin/Product/Create or /Edit              │    │
-│  │  ProductController                                          │    │
-│  │    ActivityKind.Server  "admin.product.create"              │    │
-│  │    tags: http.route · product.id · sku · publish_transition │    │
-│  └──────────────────────────────┬──────────────────────────────┘    │
-│                                 │ calls                             │
-│  ┌──────────────────────────────▼──────────────────────────────┐    │
-│  │  Catalogue Layer  ProductService                            │    │
-│  │    "catalog.product.insert"  /  "catalog.product.update"    │    │
-│  │    tags: product.id · sku · published · publish_transition  │    │
-│  │    metrics: products.inserted · products.published          │    │
-│  │             products.unpublished · publish.duration (hist.) │    │
-│  └──────────────────────────────┬──────────────────────────────┘    │
-│                                 │ EF Core event triggers            │
-│  ┌──────────────────────────────▼──────────────────────────────┐    │
-│  │  Cache Layer  ProductCacheEventConsumer                     │    │
-│  │    "catalog.cache.invalidation"                             │    │
-│  │    tags: entity_type · entity_id · cache.keys_removed_count │    │
-│  │    metrics: cache.invalidations (by event type)             │    │
-│  └──────────────────────────────┬──────────────────────────────┘    │
-│                                 │ OTLP gRPC :4317                   │
-│  ┌──────────────────────────────▼──────────────────────────────┐    │
-│  │  ObservabilityServiceExtensions (Nop.Web composition root)  │    │
-│  │    TracerProvider  ──► Source "Nop.Catalog"                 │    │
-│  │    MeterProvider   ──► Meter  "Nop.Catalog"                 │    │
-│  │    GET /metrics  (Prometheus scrape endpoint)               │    │
-│  └─────────────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────────────┘
-                         │ OTLP gRPC :4317
-                         ▼
-┌────────────────────────────────┐
-│   OpenTelemetry Collector      │
-│   receivers:  otlp (4317/4318) │
-│   processors: batch · resource │
-│   exporters:                   │
-│     traces  ──► Jaeger :14250  │
-│     metrics ──► Prometheus     │
-│               scrape :8889     │
-└───────────┬────────────────────┘
-            │                    │
-            ▼                    ▼
-┌──────────────────┐   ┌──────────────────────┐
-│  Jaeger          │   │  Prometheus          │
-│  Trace UI        │   │  Metrics storage     │
-│  :16686          │   │  :9090               │
-└────────┬─────────┘   └──────────┬───────────┘
-         │                        │
-         └────────────┬───────────┘
-                      ▼
-             ┌─────────────────┐
-             │  Grafana        │
-             │  Dashboards     │
-             │  :3000          │
-             └─────────────────┘
-```
+<img src="pictures/architecture_overview.png" alt="Architecture Overview" width="500" />
+
+Mermaid source for this diagram: [`pictures/architecture_overview.mmd`](./pictures/architecture_overview.mmd)
 
 ### Vendor-neutral instrumentation principle
 
@@ -93,6 +37,36 @@ Nop.Services  ──  System.Diagnostics only  ──  zero OTel SDK dependency
 Nop.Web       ──  OTel SDK NuGet packages  ──  only at host/composition root
                   (registers listeners, configures exporters)
 ```
+
+---
+
+## Surgical Changes to nopCommerce
+
+The observability work was intentionally kept surgical rather than spreading
+OpenTelemetry concerns through the whole codebase. The main changes to existing
+nopCommerce code were:
+
+- `ProductController`:
+  added root spans for `admin.product.create` and `admin.product.edit` so the
+  traced flow starts at the admin HTTP boundary.
+- `ProductService`:
+  added domain spans and metrics around product insert/update so the business
+  operation, not just the outer request, is observable.
+- `ProductCacheEventConsumer`:
+  added trace and metric emission for cache invalidation, exposing the main
+  post-write side-effect of the publish flow.
+- `IProductService` / `ProductService`:
+  introduced a small overload that accepts `publishTransition`, avoiding an
+  extra database query just to recover old publish state for telemetry.
+- `Nop.Web` composition root:
+  registered the OpenTelemetry SDK only in the host layer
+  (`ObservabilityServiceExtensions`), keeping `Nop.Services` vendor-neutral and
+  free from SDK package dependencies.
+
+This was done to preserve the existing layered architecture as much as
+possible: presentation concerns remain in `Nop.Web`, business meaning remains
+in `Nop.Services`, and operational side-effects remain visible through the
+existing event/cache mechanisms instead of a wider refactor.
 
 ---
 
@@ -370,7 +344,8 @@ If you see an empty output but the command runs successfully (as shown below), i
 ## Viewing the Dashboards
 
 ### Grafana - nopCommerce Catalogue Dashboard
-![Grafana Catalogue Dashboard](pictures/grafana_catalogue_dashboard.png)
+![Grafana Catalogue Dashboard](load-test/results/dashboard-after-some-load-tests.png)
+
 1. Open http://localhost:3000
 2. Navigate to **Dashboards → nopCommerce → nopCommerce: Catalogue Observability**
 3. The dashboard auto-provisions on startup - no manual import needed.
