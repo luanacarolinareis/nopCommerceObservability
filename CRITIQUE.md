@@ -54,6 +54,34 @@ ASP.NET Core automatic instrumentation spans.
 
 ---
 
+## What in nopCommerce helped and what hindered
+
+### Helped
+
+- The layered structure is real enough to be useful: admin controllers stay in
+  `Nop.Web`, business logic stays in `Nop.Services`, and persistence side
+  effects emerge through `Nop.Data` + `Nop.Core.Events`.
+- `EntityRepository<TEntity>` publishes typed entity lifecycle events after
+  insert/update/delete, which creates a natural bridge from a business write to
+  cache and other secondary effects.
+- `CacheEventConsumer<TEntity>` centralizes cache invalidation behavior, so one
+  concrete consumer (`ProductCacheEventConsumer`) can expose a meaningful
+  operational consequence of the publish flow without touching unrelated code.
+
+### Hindered
+
+- The monolith has many implicit boundaries. Important side-effects are often
+  discovered only by reading repository and consumer code together, not by
+  looking at a single service method.
+- `IEventPublisher` is generic and DI-driven, which is flexible but makes the
+  event graph less obvious to a reader. Observability boundaries exist, but
+  they are not documented as first-class architecture.
+- Rich domain objects flow through the service layer. In more sensitive flows,
+  this increases the chance of accidental over-instrumentation unless data
+  minimization is treated as an explicit design rule.
+
+---
+
 ## Known limitations and honest weaknesses
 
 ### 1. Sampling strategy: 100% always-on (not production-ready)
@@ -136,6 +164,41 @@ multi-process test runners.
 **Should have done**: Register `ActivitySource` and `Meter` as singleton
 services in the DI container and inject them, so the IoC container owns
 lifetime and tests can resolve fresh instances per `WebApplicationFactory`.
+
+### 8. The most surgical change was still a code change to the service contract
+
+The extra `UpdateProductAsync(Product product, string? publishTransition)`
+overload is a deliberate architectural compromise. Strictly speaking, the
+service should have been able to infer everything itself. In practice, the
+controller already knew the old and new publish states, and forcing the service
+to re-query the database just for telemetry would have added cost to every
+update.
+
+**Why it was necessary**: it preserved the semantic richness of the
+`catalog.product.update` span without adding a useless database round-trip.
+
+**Why it stayed surgical**: the change was a small overload on an existing
+interface rather than a broader refactor of controller-service responsibilities.
+
+### 9. Error rate is approximated at the HTTP route level, not the domain-operation level
+
+The dashboard now includes a dedicated **Admin Publish Error Rate (%)** panel,
+which satisfies the assignment requirement for an explicit error-rate
+visualization. However, the implementation is still an approximation of publish
+failures at the HTTP route layer rather than a first-class domain metric
+emitted directly by the catalogue service.
+
+More specifically, the panel computes error rate from ASP.NET Core HTTP server
+metrics for `http_route="/Admin/Product/Create"` and counts `4xx`/`5xx`
+responses as failed publish requests. That is operationally useful and much
+better than relying only on k6 console output, but it is not exactly the same
+as a custom `catalog.publish.failed` counter emitted at the business-operation
+boundary.
+
+**What would improve it further**: add a dedicated application metric for
+publish failures inside the service layer so the dashboard can distinguish
+transport-level request failures from domain-level publish failures more
+precisely.
 
 ---
 

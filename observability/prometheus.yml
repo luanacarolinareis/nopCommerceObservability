@@ -1,9 +1,9 @@
 global:
-  scrape_interval: 15s
-  evaluation_interval: 15s
+  scrape_interval: 5s
+  evaluation_interval: 5s
 
 scrape_configs:
-  # Scrape metrics forwarded by the OTel Collector (primary path)
+  # Scrape metrics forwarded by the OTel Collector
   - job_name: nopcommerce_via_collector
     static_configs:
       - targets: ["otel-collector:8889"]
@@ -11,9 +11,13 @@ scrape_configs:
           service: nopcommerce
           source: otel_collector
 
-  # Direct scrape from nopCommerce Prometheus endpoint (fallback / secondary)
-  # Enabled only when the nopCommerce container name is resolvable on this network
-  # - job_name: nopcommerce_direct
-  #   static_configs:
-  #     - targets: ["nopcommerce:80"]
-  #   metrics_path: /metrics
+  # Direct scrape from the locally running nopCommerce instance.
+  # It remains configured for debugging, but may be down depending on how the
+  # app is launched locally.
+  - job_name: nopcommerce_direct
+    static_configs:
+      - targets: ["host.docker.internal:5000"]
+        labels:
+          service: nopcommerce
+          source: direct_scrape
+    metrics_path: /metrics

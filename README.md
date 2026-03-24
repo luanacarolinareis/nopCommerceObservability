@@ -8,12 +8,14 @@
 ## Table of Contents
 
 1. [Architecture Overview](#architecture-overview)
-2. [Prerequisites](#prerequisites)
-3. [Build](#build)
-4. [Run (with observability stack)](#run)
-5. [Viewing the Dashboards](#viewing-the-dashboards)
-6. [Load Test](#load-test)
-7. [Instrumented User Flow](#instrumented-user-flow)
+2. [Architectural Reading of nopCommerce](#architectural-reading-of-nopcommerce)
+3. [Metric Design and Justification](#metric-design-and-justification)
+4. [Prerequisites](#prerequisites)
+5. [Build](#build)
+6. [Run (with observability stack)](#run)
+7. [Viewing the Dashboards](#viewing-the-dashboards)
+8. [Load Test](#load-test)
+9. [Instrumented User Flow](#instrumented-user-flow)
 
 ---
 
@@ -94,6 +96,138 @@ Nop.Web       ──  OTel SDK NuGet packages  ──  only at host/composition 
 
 ---
 
+## Architectural Reading of nopCommerce
+
+This section answers the architectural questions from the assignment directly.
+It is intentionally about the codebase structure and instrumentation trade-offs,
+not just about how to run the demo.
+
+### How the layers are organised
+
+nopCommerce is organised in a fairly traditional layered architecture:
+
+| Layer | Main responsibilities | Examples in this repository | Dependency rule |
+|------|------|------|------|
+| Presentation | HTTP endpoints, Razor views, admin/public controllers, DI composition root | `src/Presentation/Nop.Web`, `Areas/Admin/Controllers/ProductController.cs` | May depend on Services, Core, Data abstractions |
+| Services | Business logic, orchestration, cache consumers, domain workflows | `src/Libraries/Nop.Services` | May depend on Core and Data abstractions, but should not depend on Presentation |
+| Data | Repository implementation, EF/data provider plumbing, persistence concerns | `src/Libraries/Nop.Data` | Depends on Core abstractions and infrastructure contracts |
+| Core | Domain entities, events, interfaces, settings, shared primitives | `src/Libraries/Nop.Core` | Lowest-level shared layer |
+
+For this assignment, the important practical dependency rule is:
+
+- `Nop.Web` is where HTTP concerns and SDK wiring belong.
+- `Nop.Services` is where business meaning lives, so it is the best place to add domain spans and metrics.
+- `Nop.Data` is where persistence and entity lifecycle events happen.
+- `Nop.Core` defines the event contracts and shared entities that other layers react to.
+
+That layering is one reason the chosen flow was workable: the controller calls
+`IProductService`, the service writes through `IRepository<Product>`, and the
+repository then triggers entity events that cache consumers observe.
+
+### How nopCommerce handles events internally
+
+The internal event model is in-process and synchronous around `IEventPublisher`.
+
+At a high level, the chain for this flow is:
+
+```
+ProductController
+  -> IProductService
+     -> IRepository<Product>.InsertAsync / UpdateAsync
+        -> IEventPublisher.EntityInsertedAsync / EntityUpdatedAsync
+           -> EventPublisher.PublishAsync(...)
+              -> all matching IConsumer<TEvent>
+                 -> ProductCacheEventConsumer.HandleEventAsync(...)
+```
+
+The important code points are:
+
+- `EntityRepository<TEntity>` persists the entity and then publishes `EntityInsertedEvent<T>` / `EntityUpdatedEvent<T>`.
+- `EventPublisherExtensions` in `Nop.Core.Events` wraps that in typed helper methods such as `EntityInsertedAsync`.
+- `EventPublisher` in `Nop.Services.Events` resolves all `IConsumer<TEvent>` implementations from the container and invokes them sequentially.
+- `CacheEventConsumer<TEntity>` is a reusable base class that subscribes to insert/update/delete entity events and clears cache accordingly.
+- `ProductCacheEventConsumer` is the concrete consumer for `Product`.
+
+Architecturally, this matters because `IEventPublisher` is a natural
+observability boundary: it marks the moment where a write in one part of the
+system causes secondary effects elsewhere. I chose not to instrument the
+publisher itself, because that would have created a more generic but noisier
+signal. Instrumenting the concrete cache consumer gave a smaller, more
+meaningful trace for the selected flow.
+
+### Where the code makes observability easy
+
+The codebase helped in a few important ways:
+
+- The service layer already concentrates business operations behind interfaces such as `IProductService`, so one span can represent a meaningful unit of work.
+- The repository layer publishes typed entity events automatically after persistence, which creates a clean hook for post-write observability.
+- Cache invalidation is already centralized in `CacheEventConsumer<TEntity>` and `ProductCacheEventConsumer`, so the operational side-effect of a publish is observable without invasive refactoring.
+- The composition root in `Nop.Web` makes it easy to keep OpenTelemetry SDK wiring in one place (`ObservabilityServiceExtensions`) instead of spreading exporter logic through the application.
+
+### Where the code makes observability hard
+
+The codebase also creates a few frictions:
+
+- nopCommerce is a large monolith, so many meaningful workflows cross multiple services without explicit domain-level boundaries; this makes it easy to either under-instrument or produce too much noise.
+- `IEventPublisher` is generic and container-driven, which is flexible but hides the event graph. You have to read both the publisher and the consumers to understand what really happens after a write.
+- Some of the most important effects are indirect. For example, a publish does not explicitly call a cache invalidation service from `ProductService`; the effect appears later through entity events.
+- The service layer contains rich domain objects, and in more sensitive flows that would increase the risk of accidentally attaching PII-heavy objects to telemetry.
+
+### What would need to change structurally to instrument nopCommerce more deeply
+
+To instrument nopCommerce more comprehensively, the following structural changes
+would help:
+
+| Possible structural change | Benefit | Cost / why it was not done here |
+|------|------|------|
+| Wrap `IEventPublisher` with domain-aware tracing | Would expose event fan-out explicitly in traces across many workflows | High noise risk; touches a cross-cutting infrastructure service |
+| Replace static `ActivitySource` / `Meter` with DI-managed singletons | Better testability and cleaner lifecycle ownership | More refactoring for limited assignment value |
+| Introduce explicit domain services for some side-effects | Clearer instrumentation boundaries than “follow repository events” | Larger architectural change than the assignment needs |
+| Add integration tests for trace propagation and metric emission | Stronger confidence that observability survives changes | Useful, but extra scope beyond the chosen flow |
+
+For this assignment, those changes were mostly **not worth making**. The goal
+was to make a real codebase observable with minimal disruption, not to redesign
+nopCommerce around observability. The most valuable surgical change was the
+extra `UpdateProductAsync(product, publishTransition)` overload: it preserved
+the existing architecture while letting the service span capture business
+meaning without an extra database query.
+
+---
+
+## Metric Design and Justification
+
+The assignment explicitly requires metrics that an operator could act on. The
+chosen metrics were therefore selected as signals for throughput, degradation,
+and side-effects of the publish pipeline.
+
+| Metric | Why it exists | What an operator can infer / do |
+|------|------|------|
+| `catalog.products.published` | Measures business throughput, segmented by `publish_transition` | If this drops during a release or admin operation window, the operator knows publishes are not completing as expected even if the site is still up |
+| `catalog.product.publish.duration` | Measures the latency of the business pipeline itself, not just the outer HTTP request | If p95 rises before failures appear, the operator can investigate DB or cache pressure before admins start reporting timeouts |
+| `catalog.cache.invalidations` | Measures the operational effect triggered by each product write | If publishes succeed but invalidations drop unexpectedly, stale catalogue data or delayed storefront consistency becomes a likely issue |
+| `catalog.products.inserted` | Separates pure product creation from later publish-state transitions | Helps distinguish “admins are creating drafts” from “admins are actually publishing products” |
+| `catalog.products.unpublished` | Makes unpublish actions visible as their own operational event | A sudden rise can indicate admin mistakes, bulk edits, or unintended workflow behavior |
+
+### Why these metrics are operationally useful
+
+These metrics were chosen to answer concrete on-call style questions:
+
+- Is the admin publish workflow still producing business outcomes, or are requests returning without actually making products visible?
+- Is the workflow slowing down before it starts failing?
+- Are secondary effects, especially cache invalidation, still happening after the write?
+- Are admins creating products, publishing them, or unpublishing them unexpectedly?
+
+In other words, the metrics are not just “easy counters”. They separate
+business state transitions from technical side-effects, which is exactly what
+lets the dashboard tell a story:
+
+- throughput panel: are publishes happening?
+- latency panel: is the pipeline degrading?
+- cache invalidation panel: are side-effects still firing?
+- trace panel: what did one concrete request do end-to-end?
+
+---
+
 ## Prerequisites
 
 | Tool | Version | Notes |
@@ -130,6 +264,8 @@ dotnet build  src/NopCommerce.sln --configuration Release
 ```bash
 docker compose -f observability-stack.yml up -d
 ```
+
+> Note: to force clean restart -> docker compose -f observability-stack.yml up -d --force-recreate prometheus grafana
 
 This starts:
 - OpenTelemetry Collector (OTLP gRPC `:4317`, HTTP `:4318`)
@@ -172,6 +308,8 @@ Wait a few seconds for the database to initialize, then create the `citext` exte
 ```bash
 docker exec -it nopcommerce_pg psql -U postgres -d nopcommerce -c "CREATE EXTENSION IF NOT EXISTS citext;"
 ```
+
+> Note: if db container was already created, just do "docker start nopcommerce_pg"
 
 Then, run nopCommerce:
 ```bash
@@ -256,7 +394,13 @@ Panels:
 | Publish Pipeline Duration (p50 / p95 / p99) | `histogram_quantile()` over `sum by (le) (rate(catalog_product_publish_duration_milliseconds_bucket[5m]))` |
 | Cache Invalidations (rate by event type) | `sum by (entity_event_type) (rate(catalog_cache_invalidations_total[5m]))` |
 | Total Published vs Unpublished (counters) | `sum(catalog_products_published_total)` and `sum(catalog_products_unpublished_total)` |
+| Admin Publish Error Rate (%) | `100 * failed_requests / total_requests` for `http_route="/Admin/Product/Create"` using Prometheus HTTP server metrics |
 | Trace Explorer (Jaeger) | Jaeger datasource, operation `admin.product.create` |
+
+Failure visibility:
+- The dashboard now includes a dedicated **Admin Publish Error Rate (%)** panel for the chosen flow.
+- It is computed from the ASP.NET Core HTTP server metrics exported through OpenTelemetry and filtered to `http_route="/Admin/Product/Create"`.
+- The panel treats `4xx` and `5xx` responses on that route as failed publish requests and shows the percentage over the last 5 minutes.
 
 ### Jaeger - Distributed Traces
 

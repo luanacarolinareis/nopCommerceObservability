@@ -17,7 +17,7 @@
       "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
       "targets": [
         {
-          "expr": "rate(catalog_products_published_total[5m])",
+          "expr": "sum by (publish_transition) (rate(catalog_products_published_total{job=\"nopcommerce_via_collector\"}[5m]))",
           "legendFormat": "published/s ({{publish_transition}})"
         }
       ]
@@ -30,7 +30,7 @@
       "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
       "targets": [
         {
-          "expr": "rate(catalog_products_inserted_total[5m])",
+          "expr": "sum by (product_published) (rate(catalog_products_inserted_total{job=\"nopcommerce_via_collector\"}[5m]))",
           "legendFormat": "inserted/s (published={{product_published}})"
         }
       ]
@@ -43,15 +43,15 @@
       "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, rate(catalog_product_publish_duration_milliseconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(catalog_product_publish_duration_milliseconds_bucket{job=\"nopcommerce_via_collector\"}[5m])))",
           "legendFormat": "p50 ms"
         },
         {
-          "expr": "histogram_quantile(0.95, rate(catalog_product_publish_duration_milliseconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(catalog_product_publish_duration_milliseconds_bucket{job=\"nopcommerce_via_collector\"}[5m])))",
           "legendFormat": "p95 ms"
         },
         {
-          "expr": "histogram_quantile(0.99, rate(catalog_product_publish_duration_milliseconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(catalog_product_publish_duration_milliseconds_bucket{job=\"nopcommerce_via_collector\"}[5m])))",
           "legendFormat": "p99 ms"
         }
       ]
@@ -64,7 +64,7 @@
       "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
       "targets": [
         {
-          "expr": "rate(catalog_cache_invalidations_total[5m])",
+          "expr": "sum by (entity_event_type) (rate(catalog_cache_invalidations_total{job=\"nopcommerce_via_collector\"}[5m]))",
           "legendFormat": "invalidations/s ({{entity_event_type}})"
         }
       ]
@@ -75,14 +75,85 @@
       "type": "stat",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "gridPos": {"x": 0, "y": 16, "w": 6, "h": 4},
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Published"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Unpublished"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
       "targets": [
         {
-          "expr": "catalog_products_published_total",
+          "expr": "sum(catalog_products_published_total{job=\"nopcommerce_via_collector\"}) or vector(0)",
           "legendFormat": "Published"
         },
         {
-          "expr": "catalog_products_unpublished_total",
+          "expr": "sum(catalog_products_unpublished_total{job=\"nopcommerce_via_collector\"}) or vector(0)",
           "legendFormat": "Unpublished"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Admin Publish Error Rate (%)",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 6, "y": 16, "w": 18, "h": 4},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "100 * ((sum(rate(http_server_request_duration_seconds_count{job=\"nopcommerce_via_collector\",http_request_method=\"POST\",http_route=\"{area:exists}/{controller=Home}/{action=Index}/{id?}\",http_response_status_code=~\"4..|5..\"}[5m])) or vector(0)) / clamp_min(sum(rate(http_server_request_duration_seconds_count{job=\"nopcommerce_via_collector\",http_request_method=\"POST\",http_route=\"{area:exists}/{controller=Home}/{action=Index}/{id?}\"}[5m])), 1e-9))",
+          "legendFormat": "Admin POST route error rate"
         }
       ]
     },
@@ -91,7 +162,7 @@
       "title": "Trace Explorer (Jaeger)",
       "type": "traces",
       "datasource": {"type": "jaeger", "uid": "jaeger"},
-      "gridPos": {"x": 6, "y": 16, "w": 18, "h": 10},
+      "gridPos": {"x": 0, "y": 20, "w": 24, "h": 10},
       "targets": [
         {
           "service": "nopcommerce",
